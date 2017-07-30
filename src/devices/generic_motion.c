@@ -37,12 +37,10 @@ static int generic_motion_callback(bitbuffer_t *bitbuffer) {
     for (int i = 0; i < bitbuffer->num_rows; ++i) {
         b = bitbuffer->bb[i];
         // strictly validate package as there is no checksum
-        if ((bitbuffer->bits_per_row[i] == 20)
-                && ((b[1] != 0) || (b[2] != 0))
+        if ((bitbuffer->bits_per_row[i] == 13)
                 && count_repeats(bitbuffer, i) >= 3) {
 
-            code = (b[0] << 12) | (b[1] << 4) | (b[2] >> 4);
-            sprintf(code_str, "%05x", code);
+            sprintf(code_str, "%02x%02x", b[0], b[1]);
 
             /* Get time now */
             local_time_str(0, time_str);
@@ -69,9 +67,9 @@ static char *output_fields[] = {
 r_device generic_motion = {
     .name           = "Generic wireless motion sensor",
     .modulation     = OOK_PULSE_PWM_RAW,
-    .short_limit    = (888+1332)/2,
-    .long_limit     = (1784+2724)/2,
-    .reset_limit    = 2724*1.5,
+    .short_limit    = (332+660)/2,
+    .long_limit     = 660*1.5,
+    .reset_limit    = 10000,
     .json_callback  = &generic_motion_callback,
     .disabled       = 0,
     .demod_arg      = 0,
