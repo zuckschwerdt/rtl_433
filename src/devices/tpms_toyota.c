@@ -79,7 +79,7 @@ static int tpms_toyota_decode(r_device *decoder, bitbuffer_t *bitbuffer, unsigne
     return 1;
 }
 
-static int tpms_toyota_callback(r_device *decoder, bitbuffer_t *bitbuffer) {
+int tpms_toyota_callback(r_device *decoder, bitbuffer_t *bitbuffer) {
     unsigned bitpos = 0;
     int events = 0;
 
@@ -111,6 +111,6 @@ r_device tpms_toyota = {
     .long_width     = 52, // FSK
     .reset_limit    = 150, // Maximum gap size before End Of Message [us].
     .decode_fn      = &tpms_toyota_callback,
-    .disabled       = 0,
+    .disabled       = 1,
     .fields         = output_fields,
 };

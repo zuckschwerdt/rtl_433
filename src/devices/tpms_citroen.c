@@ -84,7 +84,7 @@ static int tpms_citroen_decode(r_device *decoder, bitbuffer_t *bitbuffer, unsign
     return 1;
 }
 
-static int tpms_citroen_callback(r_device *decoder, bitbuffer_t *bitbuffer) {
+int tpms_citroen_callback(r_device *decoder, bitbuffer_t *bitbuffer) {
     unsigned bitpos = 0;
     int events = 0;
 
@@ -121,6 +121,6 @@ r_device tpms_citroen = {
     .long_width     = 52, // FSK
     .reset_limit    = 150, // Maximum gap size before End Of Message [us].
     .decode_fn      = &tpms_citroen_callback,
-    .disabled       = 0,
+    .disabled       = 1,
     .fields         = output_fields,
 };

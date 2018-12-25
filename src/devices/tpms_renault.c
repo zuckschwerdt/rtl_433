@@ -74,7 +74,7 @@ static int tpms_renault_decode(r_device *decoder, bitbuffer_t *bitbuffer, unsign
     return 1;
 }
 
-static int tpms_renault_callback(r_device *decoder, bitbuffer_t *bitbuffer) {
+int tpms_renault_callback(r_device *decoder, bitbuffer_t *bitbuffer) {
     int row;
     unsigned bitpos;
     int events = 0;
@@ -113,6 +113,6 @@ r_device tpms_renault = {
     .long_width     = 52, // FSK
     .reset_limit    = 150, // Maximum gap size before End Of Message [us].
     .decode_fn      = &tpms_renault_callback,
-    .disabled       = 0,
+    .disabled       = 1,
     .fields         = output_fields,
 };
