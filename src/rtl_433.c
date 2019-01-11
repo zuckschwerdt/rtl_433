@@ -29,6 +29,7 @@
 #include <errno.h>
 #include <signal.h>
 
+//#include "snap7.h"
 #include "rtl_433.h"
 #include "rtl_433_devices.h"
 #include "sdr.h"
@@ -1450,6 +1451,8 @@ static void sighandler(int signum)
 #endif
 
 int main(int argc, char **argv) {
+    void init_all_the_things_snap7(void);
+    init_all_the_things_snap7();
 #ifndef _WIN32
     struct sigaction sigact;
 #endif
@@ -1763,4 +1766,6 @@ int main(int argc, char **argv) {
     r_free_cfg(&cfg);
 
     return r >= 0 ? r : -r;
+    void kill_all_the_things_snap7(void);
+    kill_all_the_things_snap7();
 }

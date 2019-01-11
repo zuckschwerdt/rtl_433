@@ -98,6 +98,80 @@
  */
 
 #include "decoder.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <errno.h>
+#include <string.h>
+#include <ctype.h>
+#include "snap7.h"
+
+// ----SNAP7------
+S7Object Client;
+unsigned char Buffer[65536]; // 64 K buffer
+
+char *Address = "192.168.0.10";     // PLC IP Address hardcoded
+int Rack=0,Slot=2; // Default Rack and Slot - hardcoded
+int res;
+int ok = 0; // Number of test pass
+int ko = 0; // Number of test failure
+float Temperature_PLC = 0.0;
+float Speed_PLC=0.0;
+float Gust_PLC=0.0;
+float Rain_PLC=0.0;
+int Humidity_PLC=0;
+int JobDone=false;
+int JobResult=0;
+float retf=0.0;
+byte tempB=0;
+int device_id_PLC=8;
+int hours_PLC =0;
+int minutes_PLC=0;
+int seconds_PLC=0;
+int year_PLC=0;
+int month_PLC=0;
+int day_PLC=0;
+//int msg_type; // 0=Weather 1=Datetime 2=UV/Light
+
+// Multiwrite buffer
+//Msg Type
+byte I1[2]="0"; // 2 bytes (1 word)
+//Station ID
+byte I2[2]="0"; // 2 bytes (1 word)
+//Temperature
+byte R3[4]="0"; // 4 bytes (1 real)
+//Humidity
+byte I4[2]="0"; // 2 bytes (1 word)
+//Wind direction string
+byte B5[3]="0"; // 3 bytes (3 element string)
+//Wind speed
+byte R6[4]="0"; // 4 bytes (1 real)
+//Wind gust
+byte R7[4]="0"; // 4 bytes (1 real)
+//Total rainfall
+byte R8[4]="0"; // 4 bytes (1 real)
+//WH1080 sensor battery status
+byte B9[3]="0"; // 3 bytes (3 element string)
+//Time signal type (DCF77 or WWVB/MSF)
+byte B10[8]="0"; // 8 bytes (8 element string)
+//Time signal - hours
+byte I11[2]="0"; // 2 bytes (1 word)
+//Time signal - minutes
+byte I12[2]="0"; // 2 bytes (1 word)
+//Time signal - seconds
+byte I13[2]="0"; // 2 bytes (1 word)
+//Time signal - years
+byte I14[2]="0"; // 2 bytes (1 word)
+//Time signal - months
+byte I15[2]="0"; // 2 bytes (1 word)
+//Time signal - days
+byte I16[2]="0"; // 2 bytes (1 word)
+
+
+
+
+
+
+
 
 #define CRC_POLY 0x31
 #define CRC_INIT 0xff
@@ -112,8 +186,14 @@ static unsigned short get_device_id(const uint8_t* br) {
 static char* get_battery(const uint8_t* br) {
     if ((br[9] >> 4) != 1) {
         return "OK";
+	B9[1]="O";
+	B9[2]="K";
+	B9[3]="!";
     } else {
         return "LOW";
+	B9[1]="L";
+	B9[2]="O";
+	B9[3]="W";
     }
 }
 
@@ -240,6 +320,174 @@ static int get_day(const uint8_t* br) {
     return (((br[8] & 0xF0) >> 4) * 10) + (br[8] & 0x0F);
 }
 
+// ----SNAP7------
+// ----SNAP7------
+
+//------------------------------------------------------------------------------
+//  Async completion callback
+//------------------------------------------------------------------------------
+// This is a simply text demo, we use callback only to set an internal flag...
+void S7API CliCompletion(void *usrPtr, int opCode, int opResult)
+{
+    JobResult=opResult;
+    JobDone = true;
+}
+//------------------------------------------------------------------------------
+// hexdump, a very nice function, it's not mine.
+// I found it on the net somewhere some time ago... thanks to the author ;-)
+//------------------------------------------------------------------------------
+#ifndef HEXDUMP_COLS
+#define HEXDUMP_COLS 16
+#endif
+void hexdump(void *mem, unsigned int len)
+{
+        unsigned int i, j;
+
+        for(i = 0; i < len + ((len % HEXDUMP_COLS) ? (HEXDUMP_COLS - len % HEXDUMP_COLS) : 0); i++)
+        {
+                /* print offset */
+                if(i % HEXDUMP_COLS == 0)
+                {
+                        printf("0x%04x: ", i);
+                }
+
+                /* print hex data */
+                if(i < len)
+                {
+                        printf("%02x ", 0xFF & ((char*)mem)[i]);
+                }
+                else /* end of block, just aligning for ASCII dump */
+                {
+                        printf("   ");
+                }
+
+                /* print ASCII dump */
+                if(i % HEXDUMP_COLS == (HEXDUMP_COLS - 1))
+                {
+                        for(j = i - (HEXDUMP_COLS - 1); j <= i; j++)
+                        {
+                                if(j >= len) /* end of block, not really printing */
+                                {
+                                        putchar(' ');
+                                }
+                                else if(isprint((((char*)mem)[j] & 0x7F))) /* printable char */
+                                {
+                                        putchar(0xFF & ((char*)mem)[j]);
+                                }
+                                else /* other char */
+                                {
+                                        putchar('.');
+                                }
+                        }
+                        putchar('\n');
+                }
+        }
+}
+//------------------------------------------------------------------------------
+// Function: converts input float variable to byte array
+//------------------------------------------------------------------------------
+void float2Bytes(float val,byte* bytes_array){
+  // Create union of shared memory space
+  union {
+    float float_variable;
+    byte temp_array[4];
+  } u;
+  // Overite bytes of union with float variable
+  u.float_variable = val;
+  // Assign bytes to input array
+  memcpy(bytes_array, u.temp_array, 4);
+}
+//------------------------------------------------------------------------------
+// Function: converts input int(16bit) variable to byte array
+//------------------------------------------------------------------------------
+void Int2Bytes(int val,byte* bytes_array){
+  // Create union of shared memory space
+  union {
+    int int_variable;
+    byte temp_array[2];
+  } u;
+  // Overite bytes of union with int variable
+  u.int_variable = val;
+  // Assign bytes to input array
+  memcpy(bytes_array, u.temp_array, 2);
+}
+
+//------------------------------------------------------------------------------
+// Check error
+//------------------------------------------------------------------------------
+int Check(int Result, char * function)
+{
+    int ExecTime;
+	char text[1024];
+    printf("\n");
+    printf("+-----------------------------------------------------\n");
+    printf("| %s\n",function);
+    printf("+-----------------------------------------------------\n");
+    if (Result==0) {
+        Cli_GetExecTime(Client, &ExecTime);
+        printf("| Result         : OK\n");
+        printf("| Execution time : %d ms\n",ExecTime);
+        printf("+-----------------------------------------------------\n");
+        ok++;
+    }
+    else {
+        printf("| ERROR !!! \n");
+        if (Result<0)
+            printf("| Library Error (-1)\n");
+        else
+		{
+			Cli_ErrorText(Result, text, 1024);
+			printf("| %s\n",text);
+		}
+        printf("+-----------------------------------------------------\n");
+        ko++;
+    }
+    return !Result;
+}
+//------------------------------------------------------------------------------
+// Unit Connection
+//------------------------------------------------------------------------------
+int CliConnect()
+{
+    int Requested, Negotiated, res;
+
+    res = Cli_ConnectTo(Client, Address,Rack,Slot);
+    if (Check(res,"UNIT Connection")) {
+          Cli_GetPduLength(Client, &Requested, &Negotiated);
+          printf("  Connected to   : %s (Rack=%d, Slot=%d)\n",Address,Rack,Slot);
+          printf("  PDU Requested  : %d bytes\n",Requested);
+          printf("  PDU Negotiated : %d bytes\n",Negotiated);
+    };
+    return !res;
+}
+//------------------------------------------------------------------------------
+// Unit Disconnection
+//------------------------------------------------------------------------------
+void CliDisconnect()
+{
+     Cli_Disconnect(Client);
+}
+
+//------------------------------------------------------------------------------
+// Unit communication
+//------------------------------------------------------------------------------
+
+void init_all_the_things_snap7()
+{
+	Client=Cli_Create();
+	Cli_SetAsCallback(Client, CliCompletion,NULL);
+	if (CliConnect())
+	{
+	MultiWrite();
+	};
+}
+
+void kill_all_the_things_snap7()
+{
+	CliDisconnect();
+	Cli_Destroy(&Client);
+}
+
 //-------------------------------------------------------------------------------------
 //-------------------------------------------------------------------------------------
 
@@ -316,20 +564,31 @@ static int fineoffset_wh1080_callback(r_device *decoder, bitbuffer_t *bitbuffer)
 
     if (br[0] == 0xff && (br[1] >> 4) == 0x0a) {
         msg_type = 0; // WH1080/3080 Weather msg
+	I1[1] = 0;
     } else if (br[0] == 0xff && (br[1] >> 4) == 0x0b) {
         msg_type = 1; // WH1080/3080 Datetime msg
+	I1[1] = 1;
     } else if (br[0] == 0xff && (br[1] >> 4) == 0x07) {
         msg_type = 2; // WH3080 UV/Light msg
+	I1[1] = 2;
     } else {
         msg_type = -1;
+	I1[1] = 8;
     }
 
 //---------------------------------------------------------------------------------------
 //-------- GETTING WEATHER SENSORS DATA -------------------------------------------------
 
     const float temperature = get_temperature(br);
+    Temperature_PLC = get_temperature(br);
     const int humidity = get_humidity(br);
+    Humidity_PLC = get_humidity(br);
+
     const char* direction_str = get_wind_direction_str(br);
+    B5[1] = direction_str[0];
+    B5[2] = direction_str[1];
+    B5[3] = direction_str[2];
+
     const char* direction_deg = get_wind_direction_deg(br);
 
     // Select which metric system for *wind avg speed* and *wind gust* :
@@ -339,6 +598,7 @@ static int fineoffset_wh1080_callback(r_device *decoder, bitbuffer_t *bitbuffer)
     //const float speed = get_wind_avg_ms((br)   // <--- Data will be shown in Meters/sec.
     //const float speed = get_wind_avg_mph((br)  // <--- Data will be shown in Mph
     const float speed = get_wind_avg_kmh(br);  // <--- Data will be shown in Km/h
+    Speed_PLC = get_wind_avg_kmh(br);
     //const float speed = get_wind_avg_knot((br) // <--- Data will be shown in Knots
 
     // Wind gust speed :
@@ -346,10 +606,13 @@ static int fineoffset_wh1080_callback(r_device *decoder, bitbuffer_t *bitbuffer)
     //const float gust = get_wind_gust_ms(br);   // <--- Data will be shown in Meters/sec.
     //const float gust = get_wind_gust_mph(br);  // <--- Data will be shown in Mph
     const float gust = get_wind_gust_kmh(br);  // <--- Data will be shown in km/h
+    Gust_PLC = get_wind_gust_kmh(br);
     //const float gust = get_wind_gust_knot(br); // <--- Data will be shown in Knots
 
     const float rain = get_rainfall(br);
+    Rain_PLC = get_rainfall(br);
     const int device_id = get_device_id(br);
+    device_id_PLC = get_device_id(br);
     const char* battery = get_battery(br);
 
     //---------------------------------------------------------------------------------------
@@ -374,12 +637,21 @@ static int fineoffset_wh1080_callback(r_device *decoder, bitbuffer_t *bitbuffer)
     //-------- GETTING TIME DATA ------------------------------------------------------------
 
     char* signal = get_signal(br);
+   //B10 = get_signal(br);
+
+
     const int hours = get_hours(br);
-    const int minutes =    get_minutes(br);
+    hours_PLC = get_hours(br);
+    const int minutes = get_minutes(br);
+    minutes_PLC = get_minutes(br);
     const int seconds = get_seconds(br);
+    seconds_PLC = get_seconds(br);
     const int year = 2000 + get_year(br);
+    year_PLC = 2000 + get_year(br);
     const int month = get_month(br);
+    month_PLC = get_month(br);
     const int day = get_day(br);
+    day_PLC = get_day(br);
 
     //--------- PRESENTING DATA --------------------------------------------------------------
 
@@ -436,6 +708,287 @@ static int fineoffset_wh1080_callback(r_device *decoder, bitbuffer_t *bitbuffer)
         decoder_output_data(decoder, data);
         return 1;
     }
+//------------------------------------------------------------------------------
+// Multi Write
+//------------------------------------------------------------------------------
+void MultiWrite()
+{
+
+     Int2Bytes(device_id_PLC,&I2[0]);
+//Swap bytes from big endian to little endian
+     tempB = I2[0];
+     I2[0] = I2[1];
+     I2[1] = tempB;
+
+     float2Bytes(Temperature_PLC,&R3[0]);
+//Swap bytes from big endian to little endian
+     tempB = R3[0];
+     R3[0] = R3[3];
+     R3[3] = tempB;
+
+     tempB = R3[1];
+     R3[1] = R3[2];
+     R3[2] = tempB;
+
+     Int2Bytes(Humidity_PLC,&I4[0]);
+//Swap bytes from big endian to little endian
+     tempB = I4[0];
+     I4[0] = I4[1];
+     I4[1] = tempB;
+
+//!!for char field battery modify directly the rtl433 function get_battery to write the characters directly to the correct place little-endian format B9
+//!!for char field wind direction modify directly the rtl433 function get_wind_direction to write the characters directly to the correct place little-endian format B5
+     float2Bytes(Speed_PLC,&R6[0]);
+//Swap bytes from big endian to little endian
+     tempB = R6[0];
+     R6[0] = R6[3];
+     R6[3] = tempB;
+
+     tempB = R6[1];
+     R6[1] = R6[2];
+     R6[2] = tempB;
+     float2Bytes(Gust_PLC,&R7[0]);
+//Swap bytes from big endian to little endian
+     tempB = R7[0];
+     R7[0] = R7[3];
+     R7[3] = tempB;
+
+     tempB = R7[1];
+     R7[1] = R7[2];
+     R7[2] = tempB;
+     float2Bytes(Rain_PLC,&R8[0]);
+//Swap bytes from big endian to little endian
+     tempB = R8[0];
+     R8[0] = R8[3];
+     R8[3] = tempB;
+
+     tempB = R8[1];
+     R8[1] = R8[2];
+     R8[2] = tempB;
+
+     Int2Bytes(hours_PLC,&I11[0]);
+//Swap bytes from big endian to little endian
+     tempB = I11[0];
+     I11[0] = I11[1];
+     I11[1] = tempB;
+
+     Int2Bytes(minutes_PLC,&I12[0]);
+//Swap bytes from big endian to little endian
+     tempB = I12[0];
+     I12[0] = I12[1];
+     I12[1] = tempB;
+     Int2Bytes(seconds_PLC,&I13[0]);
+//Swap bytes from big endian to little endian
+     tempB = I13[0];
+     I13[0] = I13[1];
+     I13[1] = tempB;
+
+     Int2Bytes(year_PLC,&I14[0]);
+//Swap bytes from big endian to little endian
+     tempB = I14[0];
+     I14[0] = I14[1];
+     I14[1] = tempB;
+
+     Int2Bytes(month_PLC,&I15[0]);
+//Swap bytes from big endian to little endian
+     tempB = I15[0];
+     I15[0] = I15[1];
+     I15[1] = tempB;
+
+     Int2Bytes(day_PLC,&I16[0]);
+//Swap bytes from big endian to little endian
+     tempB = I16[0];
+     I16[0] = I16[1];
+     I16[1] = tempB;
+
+     // Prepare struct
+     TS7DataItem Items[16];
+
+     // NOTE : *AMOUNT IS NOT SIZE* , it's the number of items
+     // I1 - Msg Type
+     Items[0].Area     =S7AreaDB;
+     Items[0].WordLen  =S7WLByte;
+     Items[0].DBNumber =92;
+     Items[0].Start    =0;         // Starting from 0
+     Items[0].Amount   =2;         // 2 Items (bytes)
+     Items[0].pdata    =&I1;
+     // I2 - Station ID
+     Items[1].Area     =S7AreaDB;
+     Items[1].WordLen  =S7WLByte;
+     Items[1].DBNumber =92;
+     Items[1].Start    =2;         // Starting from 2
+     Items[1].Amount   =2;         // 2 Items (bytes)
+     Items[1].pdata    =&I2;
+     // R3 - Temperature
+     Items[2].Area     =S7AreaDB;
+     Items[2].WordLen  =S7WLByte;
+     Items[2].DBNumber =92;
+     Items[2].Start    =4;         // Starting from 4
+     Items[2].Amount   =4;         // 4 Items (bytes)
+     Items[2].pdata    =&R3;
+     // I4 - Humidity
+     Items[3].Area     =S7AreaDB;
+     Items[3].WordLen  =S7WLByte;
+     Items[3].DBNumber =92;
+     Items[3].Start    =8;         // Starting from 8
+     Items[3].Amount   =2;         // 2 Items (bytes)
+     Items[3].pdata    =&I4;
+     // B5 - Wind direction string
+     Items[4].Area     =S7AreaDB;
+     Items[4].WordLen  =S7WLByte;
+     Items[4].DBNumber =92;
+     Items[4].Start    =10;        // Starting from 10
+     Items[4].Amount   =3;         // 3 Items (bytes)
+     Items[4].pdata    =&B5;
+     // R6 - Wind average speed
+     Items[5].Area     =S7AreaDB;
+     Items[5].WordLen  =S7WLByte;
+     Items[5].DBNumber =92;
+     Items[5].Start    =14;        // Starting from 14
+     Items[5].Amount   =4;         // 4 Items (bytes)
+     Items[5].pdata    =&R6;
+     // R7 - Wind gust speed
+     Items[6].Area     =S7AreaDB;
+     Items[6].WordLen  =S7WLByte;
+     Items[6].DBNumber =92;
+     Items[6].Start    =18;        // Starting from 18
+     Items[6].Amount   =4;         // 4 Items (bytes)
+     Items[6].pdata    =&R7;
+     // R8 - Total rainfall value increased with 0.3mm increments at once
+     Items[7].Area     =S7AreaDB;
+     Items[7].WordLen  =S7WLByte;
+     Items[7].DBNumber =92;
+     Items[7].Start    =22;        // Starting from 22
+     Items[7].Amount   =4;         // 4 Items (bytes)
+     Items[7].pdata    =&R8;
+     // B9 - Battery status indication string
+     Items[8].Area     =S7AreaDB;
+     Items[8].WordLen  =S7WLByte;
+     Items[8].DBNumber =92;
+     Items[8].Start    =26;        // Starting from 26
+     Items[8].Amount   =3;         // 3 Items (bytes)
+     Items[8].pdata    =&B9;
+     // B10 - Time signal type indication string
+     Items[9].Area     =S7AreaDB;
+     Items[9].WordLen  =S7WLByte;
+     Items[9].DBNumber =92;
+     Items[9].Start    =29;        // Starting from 29
+     Items[9].Amount   =8;         // 8 Items (bytes)
+     Items[9].pdata    =&B10;
+     // I11 - Time - hours
+     Items[10].Area     =S7AreaDB;
+     Items[10].WordLen  =S7WLByte;
+     Items[10].DBNumber =92;
+     Items[10].Start    =38;        // Starting from 38
+     Items[10].Amount   =2;         // 2 Items (bytes)
+     Items[10].pdata    =&I11;
+     // I12 - Time - minutes
+     Items[11].Area     =S7AreaDB;
+     Items[11].WordLen  =S7WLByte;
+     Items[11].DBNumber =92;
+     Items[11].Start    =40;        // Starting from 40
+     Items[11].Amount   =2;         // 2 Items (bytes)
+     Items[11].pdata    =&I12;
+     // I13 - Time - seconds
+     Items[12].Area     =S7AreaDB;
+     Items[12].WordLen  =S7WLByte;
+     Items[12].DBNumber =92;
+     Items[12].Start    =42;        // Starting from 42
+     Items[12].Amount   =2;         // 2 Items (bytes)
+     Items[12].pdata    =&I13;
+     // I14 - Time - years
+     Items[13].Area     =S7AreaDB;
+     Items[13].WordLen  =S7WLByte;
+     Items[13].DBNumber =92;
+     Items[13].Start    =44;        // Starting from 44
+     Items[13].Amount   =2;         // 2 Items (bytes)
+     Items[13].pdata    =&I14;
+     // I15 - Time - months
+     Items[14].Area     =S7AreaDB;
+     Items[14].WordLen  =S7WLByte;
+     Items[14].DBNumber =92;
+     Items[14].Start    =46;        // Starting from 46
+     Items[14].Amount   =2;         // 2 Items (bytes)
+     Items[14].pdata    =&I15;
+     // I16 - Time - days
+     Items[15].Area     =S7AreaDB;
+     Items[15].WordLen  =S7WLByte;
+     Items[15].DBNumber =92;
+     Items[15].Start    =48;        // Starting from 48
+     Items[15].Amount   =2;         // 2 Items (bytes)
+     Items[15].pdata    =&I16;
+
+
+    if (msg_type == 0) {
+	res=Cli_WriteMultiVars(Client, &Items[0], 9);
+	}
+    else if (msg_type == 1) {
+	res=Cli_WriteMultiVars(Client, &Items[9], 7);
+       }
+
+
+
+     if (Check(res,"Multiwrite Vars"))
+     {
+        // Result of Client->WriteMultiVars is the "global result" of
+        // the function, it's OK if something was exchanged.
+
+        // But we need to check single Var results.
+        // Let shall suppose that we ask for 3 vars, 2 of them are ok but
+        // the 3rd is non-existent, we will have 2 results ok and 1 not ok.
+	if (msg_type == 0) {
+        printf("Dump I1 Msg_type - Var Result : %d\n",Items[0].Result);
+        if (Items[0].Result==0)
+            hexdump(&I1,2);
+        printf("Dump I2 Station ID - Var Result : %d\n",Items[1].Result);
+        if (Items[1].Result==0)
+            hexdump(&I2,2);
+        printf("Dump R3 Temperature - Var Result : %d\n",Items[2].Result);
+        if (Items[2].Result==0)
+            hexdump(&R3,4);
+        printf("Dump I4 Humidity - Var Result : %d\n",Items[3].Result);
+        if (Items[3].Result==0)
+            hexdump(&I4,2);
+        printf("Dump B5 Wind direction string - Var Result : %d\n",Items[4].Result);
+        if (Items[4].Result==0)
+            hexdump(&B5,3);
+        printf("Dump R6 Wind average speed - Var Result : %d\n",Items[5].Result);
+        if (Items[5].Result==0)
+            hexdump(&R6,4);
+        printf("Dump R7 Wind gust speed - Var Result : %d\n",Items[6].Result);
+        if (Items[6].Result==0)
+            hexdump(&R7,4);
+        printf("Dump R8 Rainfall - Var Result : %d\n",Items[7].Result);
+        if (Items[7].Result==0)
+            hexdump(&R8,4);
+        printf("Dump B9 Battery status - Var Result : %d\n",Items[8].Result);
+        if (Items[8].Result==0)
+            hexdump(&B9,3);
+	}
+	if (msg_type == 1) {
+        printf("Dump I11 Time - hours  - Var Result : %d\n",Items[10].Result);
+        if (Items[10].Result==0)
+            hexdump(&I11,2);
+        printf("Dump I12 Time - minutes  - Var Result : %d\n",Items[11].Result);
+        if (Items[11].Result==0)
+            hexdump(&I12,2);
+        printf("Dump I13 Time - seconds  - Var Result : %d\n",Items[12].Result);
+        if (Items[12].Result==0)
+            hexdump(&I13,2);
+        printf("Dump I14 Time - year  - Var Result : %d\n",Items[13].Result);
+        if (Items[13].Result==0)
+            hexdump(&I14,2);
+        printf("Dump I15 Time - month  - Var Result : %d\n",Items[14].Result);
+        if (Items[14].Result==0)
+            hexdump(&I15,2);
+        printf("Dump I16 Time - day  - Var Result : %d\n",Items[15].Result);
+        if (Items[15].Result==0)
+            hexdump(&I16,2);
+	}
+     };
+}
+
+
 }
 
 static char *output_fields[] = {
@@ -476,3 +1029,5 @@ r_device fineoffset_wh1080 = {
     .disabled       = 0,
     .fields         = output_fields,
 };
+
+
